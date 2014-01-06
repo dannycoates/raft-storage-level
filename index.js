@@ -2,7 +2,7 @@ var level = require('level')
 
 function LevelStorage(options) {
 	options = options || {}
-	this.db = level(options.db || './raft.db', { valueEncoding: 'json'})
+	this.db = level(options.db || './raft.db', { keyEncoding: 'binary', valueEncoding: 'json'})
 	this.length = 0
 }
 
@@ -14,12 +14,12 @@ LevelStorage.prototype.load = function (callback) {
 	}
 	this.db.createReadStream()
 		.on('data', function (data) {
-			var index = +data.key
-			if (isNaN(index)) {
-				state[data.key] = data.value
+			var buf = Buffer(data.key, 'binary')
+			if(buf.length > 4) {
+				state[buf.toString()] = data.value
 			}
 			else {
-				state.entries[index] = data.value
+				state.entries[buf.readUInt32BE(0)] = data.value
 			}
 		})
 		.on('error', function (err) {
@@ -41,16 +41,22 @@ function add(batch, object) {
 	}
 }
 
+function itob(index) {
+	var b = Buffer(4)
+	b.writeUInt32BE(index, 0)
+	return b
+}
+
 LevelStorage.prototype.appendEntries = function (startIndex, entries, state, callback) {
 	var batch = this.db.batch()
 	add(batch, state)
 	for (var i = 0, x = startIndex; i < entries.length; i++, x++) {
-		batch.put(x, entries[i], { sync: true })
+		batch.put(itob(x), entries[i], { sync: true })
 	}
 	var nextIndex = startIndex + entries.length
 	if (this.length > nextIndex) {
 		for (var x = nextIndex; x < this.length; x++) {
-			batch.del(x, { sync: true })
+			batch.del(itob(x), { sync: true })
 		}
 	}
 	this.length = nextIndex
